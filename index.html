@@ -13,30 +13,81 @@
      no external assets, no persistence.
      ============================================================ -->
 
+<!-- ============================================================
+     SECURITY HEADERS (see script section 0 for the full rationale)
+
+     Content-Security-Policy, delivered via <meta> so it still
+     applies from a bare file:// URL:
+
+       default-src 'none'   deny-by-default; nothing loads unless
+                            a directive below allows it.
+       script-src / style-src 'unsafe-inline'
+                            required: this app is one file, so its
+                            only script and style ARE inline. This
+                            is the deliberate weak point of the
+                            policy — hashes are impossible without
+                            a build step. Everything else is tight.
+       connect-src          the ONE permitted egress destination.
+                            Even if an attacker achieved script
+                            execution, the browser would refuse to
+                            POST board data anywhere else.
+       img-src / object-src / base-uri / form-action 'none'
+                            no images, no plugins, no <base> tag
+                            hijack, no form-action redirection.
+
+     NOT set here — clickjacking:
+       frame-ancestors is deliberately absent. Browsers ignore that
+       directive when it arrives in a <meta> tag and log a console
+       error, so including it would buy nothing and add permanent
+       noise. It has to be a real response header:
+
+         Content-Security-Policy: frame-ancestors 'none'
+         X-Frame-Options: DENY
+
+       Whoever serves this file should set those. GitHub Pages
+       cannot, so the hosted copy is framable — acceptable for a
+       demo board with no auth and no privileged actions, and
+       recorded here so the gap is a decision, not an oversight.
+     ============================================================ -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src https://formsubmit.co">
+
+<!-- Never leak this page's URL (or local file path) to the notification endpoint. -->
+<meta name="referrer" content="no-referrer">
+
 <style>
 /* ============================================================
    1. DESIGN TOKENS
+   ------------------------------------------------------------
+   Green corporate palette (generic — not a brand palette).
+   Every text/background pair below was contrast-checked:
+     #ffffff on --green-700 ....... 7.2:1  (AAA)
+     #ffffff on --green-600 ....... 5.0:1  (AA)
+     --text-mute on --surface ..... 5.8:1  (AA)
+     --text on --surface ......... 15.8:1  (AAA)
+   Colour is never the only signal: priority, overdue and status
+   all carry a text label as well as a hue.
    ============================================================ */
 :root {
-  /* Corporate blue palette (generic — not a brand palette) */
-  --blue-900: #0b2545;
-  --blue-800: #133a6b;
-  --blue-700: #1b4f8f;
-  --blue-600: #2166b0;
-  --blue-100: #e7f0fa;
-  --blue-050: #f3f8fd;
+  /* Corporate green palette (generic — not a brand palette) */
+  --green-900: #06301f;
+  --green-800: #0b4a30;
+  --green-700: #10643f;
+  --green-600: #157f50;
+  --green-300: #8fc9ab;
+  --green-100: #dff0e6;
+  --green-050: #f1f8f3;
 
   /* Surfaces & text */
-  --bg:        #eef2f6;
+  --bg:        #eef4ef;
   --surface:   #ffffff;
-  --surface-2: #f7f9fc;
-  --border:    #d5dee8;
-  --text:      #1c2733;
-  --text-mute: #5b6b7c;
+  --surface-2: #f6faf7;
+  --border:    #d3e2d8;
+  --text:      #16241c;
+  --text-mute: #566a60;
 
   /* Status accents */
-  --ok:      #1c7a4a;
-  --ok-bg:   #e6f4ec;
+  --ok:      #10643f;
+  --ok-bg:   #e2f2e8;
   --warn:    #8a5a00;
   --warn-bg: #fdf3e0;
   --danger:  #b3261e;
@@ -44,11 +95,11 @@
 
   /* Priority colours */
   --prio-critical: #b3261e;
-  --prio-high:     #c07800;
-  --prio-medium:   #2166b0;
-  --prio-low:      #7b8794;
+  --prio-high:     #a35a00;
+  --prio-medium:   #157f50;
+  --prio-low:      #6c7a72;
 
-  /* Spacing scale */
+  /* Spacing scale — dense/dashboard rhythm (4 → 32px) */
   --s-1: 4px;
   --s-2: 8px;
   --s-3: 12px;
@@ -58,7 +109,12 @@
 
   --radius: 8px;
   --radius-sm: 5px;
-  --shadow: 0 1px 2px rgba(11, 37, 69, .08), 0 2px 8px rgba(11, 37, 69, .06);
+  --shadow: 0 1px 2px rgba(6, 48, 31, .08), 0 2px 8px rgba(6, 48, 31, .06);
+
+  /* Width of a collapsed column rail / collapsed sidebar rail */
+  --rail: 46px;
+
+  --speed: .16s;
 
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
@@ -81,7 +137,7 @@ h1, h2, h3 { margin: 0; font-weight: 650; }
 
 /* Visible focus ring everywhere — never removed. */
 :focus-visible {
-  outline: 3px solid var(--blue-600);
+  outline: 3px solid var(--green-700);
   outline-offset: 2px;
   border-radius: 3px;
 }
@@ -94,8 +150,9 @@ button {
   background: var(--surface);
   color: var(--text);
   padding: var(--s-2) var(--s-3);
+  transition: background-color var(--speed) ease, border-color var(--speed) ease;
 }
-button:hover { background: var(--surface-2); }
+button:hover { background: var(--green-050); border-color: var(--green-300); }
 
 input, select, textarea {
   font: inherit;
@@ -119,11 +176,14 @@ textarea { resize: vertical; min-height: 68px; }
   border: 0;
 }
 
+/* Inline SVG icons inherit text colour and never carry meaning alone. */
+.icon { display: block; width: 14px; height: 14px; flex: none; }
+
 /* ============================================================
    3. HEADER — wordmark, live summary strip, demo note
    ============================================================ */
 .app-header {
-  background: linear-gradient(180deg, var(--blue-800), var(--blue-900));
+  background: linear-gradient(180deg, var(--green-800), var(--green-900));
   color: #fff;
   padding: var(--s-4) var(--s-5);
 }
@@ -184,7 +244,7 @@ textarea { resize: vertical; min-height: 68px; }
 }
 
 /* ============================================================
-   4. LAYOUT — sidebar + board
+   4. LAYOUT — collapsible sidebar + board
    ============================================================ */
 .layout {
   display: grid;
@@ -193,6 +253,8 @@ textarea { resize: vertical; min-height: 68px; }
   padding: var(--s-5);
   align-items: start;
 }
+/* Sidebar collapsed → the board takes the reclaimed width. */
+.layout.sidebar-collapsed { grid-template-columns: var(--rail) minmax(0, 1fr); }
 
 .panel {
   background: var(--surface);
@@ -202,11 +264,60 @@ textarea { resize: vertical; min-height: 68px; }
 }
 
 .panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
   padding: var(--s-3) var(--s-4);
   border-bottom: 1px solid var(--border);
   background: var(--surface-2);
   border-radius: var(--radius) var(--radius) 0 0;
   font-size: 14px;
+}
+
+/* A small square toggle used by every collapsible region. */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--text-mute);
+  background: transparent;
+  border-color: transparent;
+}
+.toggle:hover { background: var(--green-100); color: var(--green-800); border-color: var(--green-300); }
+.toggle .icon { transition: transform var(--speed) ease; }
+/* Chevron points down when expanded, right when collapsed. */
+.toggle[aria-expanded="false"] .icon { transform: rotate(-90deg); }
+
+/* ---- Sidebar collapsed rail ----
+   Every rule below is scoped to #sidebar. The filter panel is also
+   a .panel inside .layout, so an unscoped `.sidebar-collapsed
+   .panel-head` would silently restyle the filter header too. */
+.sidebar-collapsed #sidebar .task-form,
+.sidebar-collapsed #sidebar .panel-head h2 { display: none; }
+
+.sidebar-rail {
+  display: none;
+  padding: var(--s-3) 0 var(--s-4);
+  justify-content: center;
+}
+.sidebar-collapsed #sidebar .sidebar-rail { display: flex; }
+.sidebar-rail span {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .6px;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+.sidebar-collapsed #sidebar .panel-head {
+  justify-content: center;
+  padding: var(--s-2) 0;
+  border-radius: var(--radius) var(--radius) 0 0;
 }
 
 /* ============================================================
@@ -242,13 +353,13 @@ textarea { resize: vertical; min-height: 68px; }
 
 .btn-primary {
   width: 100%;
-  background: var(--blue-700);
-  border-color: var(--blue-700);
+  background: var(--green-700);
+  border-color: var(--green-700);
   color: #fff;
   font-weight: 600;
   padding: var(--s-3);
 }
-.btn-primary:hover { background: var(--blue-600); border-color: var(--blue-600); }
+.btn-primary:hover { background: var(--green-600); border-color: var(--green-600); }
 .btn-primary[disabled] {
   background: var(--text-mute);
   border-color: var(--text-mute);
@@ -256,17 +367,32 @@ textarea { resize: vertical; min-height: 68px; }
 }
 
 /* ============================================================
-   6. FILTER BAR
+   6. BOARD TOOLBAR + FILTER BAR (collapsible)
    ============================================================ */
-.filter-bar {
+.board-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+.board-toolbar .spacer { flex: 1 1 auto; }
+.board-toolbar .toolbar-note {
+  font-size: 12px;
+  color: var(--text-mute);
+}
+
+.filter-panel { margin-bottom: var(--s-4); }
+
+.filter-fields {
   display: grid;
   grid-template-columns: repeat(3, minmax(140px, 1fr)) auto;
   gap: var(--s-3);
   align-items: end;
   padding: var(--s-4);
-  margin-bottom: var(--s-4);
 }
-.filter-bar label {
+.filter-fields[hidden] { display: none; }
+.filter-fields label {
   display: block;
   font-size: 12.5px;
   font-weight: 600;
@@ -275,44 +401,58 @@ textarea { resize: vertical; min-height: 68px; }
 }
 
 /* ============================================================
-   7. BOARD & COLUMNS
+   7. BOARD & COLUMNS (collapsible)
+   ------------------------------------------------------------
+   Flex, not grid: a collapsed column simply changes its
+   flex-basis to a narrow rail, so the remaining columns take
+   the freed space without recomputing a grid template.
    ============================================================ */
 .board {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  display: flex;
+  align-items: stretch;
   gap: var(--s-4);
-  align-items: start;
 }
 
 .column {
+  flex: 1 1 0;
+  min-width: 0;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   display: flex;
   flex-direction: column;
-  min-height: 180px;
-  transition: background-color .12s ease, border-color .12s ease;
+  min-height: 200px;
+  transition: background-color var(--speed) ease, border-color var(--speed) ease, flex-basis var(--speed) ease;
 }
 
 .column-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--s-2);
-  padding: var(--s-3);
+  padding: var(--s-2) var(--s-3);
   border-bottom: 1px solid var(--border);
 }
-.column-head h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .4px; }
+.column-head h3 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .count-badge {
   min-width: 24px;
   text-align: center;
-  background: var(--blue-100);
-  color: var(--blue-800);
+  background: var(--green-100);
+  color: var(--green-800);
   border-radius: 999px;
   padding: 1px var(--s-2);
   font-size: 12px;
   font-weight: 700;
+  flex: none;
 }
 
 .column-body {
@@ -323,11 +463,32 @@ textarea { resize: vertical; min-height: 68px; }
   flex: 1;
 }
 
+/* ---- Collapsed column rail ---- */
+.column.is-collapsed { flex: 0 0 var(--rail); }
+.column.is-collapsed .column-body { display: none; }
+.column.is-collapsed .column-head {
+  flex-direction: column;
+  padding: var(--s-2) var(--s-1);
+  border-bottom: 0;
+  gap: var(--s-3);
+  flex: 1;
+}
+/* flex:1 on the rotated title pushes the count badge to the foot
+   of every rail, so the badges line up whatever the label length. */
+.column.is-collapsed .column-head h3 {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+
 /* Drop-target highlight */
 .column.drag-over {
-  background: var(--blue-050);
-  border-color: var(--blue-600);
-  box-shadow: inset 0 0 0 2px var(--blue-600);
+  background: var(--green-050);
+  border-color: var(--green-600);
+  box-shadow: inset 0 0 0 2px var(--green-600);
 }
 
 .empty-note {
@@ -339,7 +500,7 @@ textarea { resize: vertical; min-height: 68px; }
 }
 
 /* ============================================================
-   8. CARDS
+   8. CARDS (collapsible)
    ============================================================ */
 .card {
   background: var(--surface);
@@ -361,25 +522,32 @@ textarea { resize: vertical; min-height: 68px; }
 .card-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--s-2);
+  gap: var(--s-1);
 }
 .task-id {
   font-size: 11.5px;
   font-weight: 700;
   color: var(--text-mute);
   letter-spacing: .3px;
+  flex: 1 1 auto;
 }
 
 .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-mute);
-  font-size: 16px;
-  line-height: 1;
-  padding: 2px var(--s-2);
+  flex: none;
 }
-.icon-btn:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
+.icon-btn:hover { background: var(--green-100); color: var(--green-800); border-color: var(--green-300); }
+.icon-btn.danger:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
+.icon-btn .icon { transition: transform var(--speed) ease; }
+.icon-btn[aria-expanded="false"] .icon { transform: rotate(-90deg); }
 
 .card-title {
   margin: var(--s-2) 0 var(--s-2);
@@ -421,11 +589,11 @@ textarea { resize: vertical; min-height: 68px; }
 /* Priority pills carry text as well as colour — colour is never the only signal. */
 .pill-prio[data-priority="Critical"] { color: var(--prio-critical); border-color: var(--prio-critical); background: var(--danger-bg); }
 .pill-prio[data-priority="High"]     { color: var(--prio-high);     border-color: var(--prio-high);     background: var(--warn-bg); }
-.pill-prio[data-priority="Medium"]   { color: var(--prio-medium);   border-color: var(--prio-medium);   background: var(--blue-100); }
+.pill-prio[data-priority="Medium"]   { color: var(--prio-medium);   border-color: var(--prio-medium);   background: var(--green-100); }
 .pill-prio[data-priority="Low"]      { color: var(--prio-low);      border-color: var(--prio-low);      background: var(--surface-2); }
 
 .pill-cat {
-  color: var(--blue-800);
+  color: var(--green-800);
   border-color: var(--border);
   background: var(--surface-2);
   font-weight: 600;
@@ -499,9 +667,9 @@ textarea { resize: vertical; min-height: 68px; }
   font-size: 13px;
   background: var(--surface);
 }
-.toast-success { border-color: var(--ok);     background: var(--ok-bg);   color: #14532d; }
-.toast-warn    { border-color: var(--warn);   background: var(--warn-bg); color: #6b4400; }
-.toast-info    { border-color: var(--blue-600); background: var(--blue-100); color: var(--blue-900); }
+.toast-success { border-color: var(--ok);        background: var(--ok-bg);     color: var(--green-900); }
+.toast-warn    { border-color: var(--warn);      background: var(--warn-bg);   color: #6b4400; }
+.toast-info    { border-color: var(--green-600); background: var(--green-100); color: var(--green-900); }
 
 /* ============================================================
    10. FOOTER
@@ -513,13 +681,41 @@ textarea { resize: vertical; min-height: 68px; }
 }
 
 /* ============================================================
-   11. RESPONSIVE — stack below 768px
+   11. RESPONSIVE — 1024 / 768 / 375 breakpoints
    ============================================================ */
+@media (max-width: 1024px) {
+  .board { flex-wrap: wrap; }
+  .column { flex: 1 1 calc(50% - var(--s-4)); }
+  .column.is-collapsed { flex: 0 0 var(--rail); }
+}
+
 @media (max-width: 768px) {
-  .layout { grid-template-columns: minmax(0, 1fr); padding: var(--s-4); gap: var(--s-4); }
-  .board  { grid-template-columns: minmax(0, 1fr); }
-  .filter-bar { grid-template-columns: minmax(0, 1fr); }
+  .layout,
+  .layout.sidebar-collapsed { grid-template-columns: minmax(0, 1fr); padding: var(--s-4); gap: var(--s-4); }
+  .board { flex-direction: column; }
+  .column,
+  .column.is-collapsed { flex: 1 1 auto; }
+  /* A collapsed column becomes a short horizontal strip, not a rail. */
+  .column.is-collapsed { min-height: 0; }
+  .column.is-collapsed .column-head { flex-direction: row; padding: var(--s-2) var(--s-3); }
+  .column.is-collapsed .column-head h3 { writing-mode: horizontal-tb; transform: none; }
+  .sidebar-collapsed .sidebar-rail { display: none; }
+  .filter-fields { grid-template-columns: minmax(0, 1fr); }
   .toast-region { right: var(--s-3); left: var(--s-3); bottom: var(--s-3); max-width: none; }
+  /* Comfortable touch targets on small screens. */
+  .toggle, .icon-btn { width: 44px; height: 44px; }
+}
+
+@media (max-width: 375px) {
+  .layout { padding: var(--s-3); }
+  .board-toolbar { gap: var(--s-1); }
+}
+
+/* ============================================================
+   12. REDUCED MOTION — honour the user's OS preference
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0.01ms; animation-duration: 0.01ms; }
 }
 </style>
 </head>
@@ -546,13 +742,26 @@ textarea { resize: vertical; min-height: 68px; }
 </header>
 
 <!-- ============================================================
-     MAIN — Add Task sidebar + filter bar + board
+     MAIN — collapsible Add Task sidebar + filters + board
      ============================================================ -->
-<main class="layout">
+<main class="layout" id="layout">
 
-  <!-- ---------- Add Task panel ---------- -->
-  <aside class="panel" aria-labelledby="form-heading">
-    <div class="panel-head"><h2 id="form-heading">+ Add Task</h2></div>
+  <!-- ---------- Add Task panel (collapsible) ---------- -->
+  <aside class="panel" id="sidebar" aria-labelledby="form-heading">
+    <div class="panel-head">
+      <h2 id="form-heading">+ Add Task</h2>
+      <button type="button" class="toggle" id="toggle-sidebar"
+              aria-expanded="true" aria-controls="task-form">
+        <span class="sr-only">Collapse the Add Task panel</span>
+        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Vertical label shown only while the sidebar is collapsed -->
+    <div class="sidebar-rail" aria-hidden="true"><span>Add Task</span></div>
 
     <form class="task-form" id="task-form" novalidate>
 
@@ -615,25 +824,48 @@ textarea { resize: vertical; min-height: 68px; }
     </form>
   </aside>
 
-  <!-- ---------- Filters + board ---------- -->
+  <!-- ---------- Toolbar + filters + board ---------- -->
   <section class="board-area" aria-labelledby="board-heading">
     <h2 id="board-heading" class="sr-only">Task board</h2>
 
-    <div class="panel filter-bar" role="search">
-      <div>
-        <label for="filter-project">Project</label>
-        <select id="filter-project"></select>
+    <!-- Board-wide collapse controls -->
+    <div class="board-toolbar">
+      <button type="button" id="collapse-all">Collapse all columns</button>
+      <button type="button" id="expand-all">Expand all columns</button>
+      <button type="button" id="toggle-cards" aria-pressed="false">Compact cards</button>
+      <span class="spacer"></span>
+      <span class="toolbar-note" id="collapse-note"></span>
+    </div>
+
+    <div class="panel filter-panel" role="search">
+      <div class="panel-head">
+        <h2 id="filter-heading">Filters</h2>
+        <button type="button" class="toggle" id="toggle-filters"
+                aria-expanded="true" aria-controls="filter-fields">
+          <span class="sr-only">Collapse the filter panel</span>
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
       </div>
-      <div>
-        <label for="filter-assignee">Assignee contains</label>
-        <input type="text" id="filter-assignee" placeholder="e.g. tan" autocomplete="off">
-      </div>
-      <div>
-        <label for="filter-priority">Priority</label>
-        <select id="filter-priority"></select>
-      </div>
-      <div>
-        <button type="button" id="clear-filters">Clear filters</button>
+
+      <div class="filter-fields" id="filter-fields">
+        <div>
+          <label for="filter-project">Project</label>
+          <select id="filter-project"></select>
+        </div>
+        <div>
+          <label for="filter-assignee">Assignee contains</label>
+          <input type="text" id="filter-assignee" placeholder="e.g. tan" autocomplete="off" maxlength="60">
+        </div>
+        <div>
+          <label for="filter-priority">Priority</label>
+          <select id="filter-priority"></select>
+        </div>
+        <div>
+          <button type="button" id="clear-filters">Clear filters</button>
+        </div>
       </div>
     </div>
 
@@ -656,6 +888,41 @@ textarea { resize: vertical; min-height: 68px; }
 "use strict";
 
 /* ============================================================
+   0. SECURITY MODEL (STRIDE, applied to this file)
+   ------------------------------------------------------------
+   Assets ....... in-memory task data (incl. assignee names, which
+                  are personal data), and the one outbound channel
+                  to FormSubmit.
+   Trust boundaries
+     (a) form input -> innerHTML .... every interpolated value is
+         passed through escapeHtml(); free-text values are first
+         run through sanitizeText() to strip control characters
+         and Unicode bidirectional overrides (U+202A-202E,
+         U+2066-2069) that can visually spoof a task title.
+     (b) app -> formsubmit.co ....... the only egress. Locked down
+         by connect-src in the CSP, and by the fetch options in
+         section 10 (no credentials, no referrer, no redirects,
+         hard timeout).
+   Threats and the control that answers each:
+     Tampering / EoP (script injection) .. escapeHtml + sanitizeText
+                                           + deny-by-default CSP
+     Information disclosure .............. connect-src allow-list,
+                                           no-referrer, credentials
+                                           omitted, unconfigured-
+                                           endpoint guard
+     Denial of service ................... MAX_TASKS cap, submit
+                                           rate limit, fetch timeout
+     Repudiation ......................... out of scope: this demo
+                                           has no auth and no audit
+                                           log, and stores nothing.
+   Residual risk, stated plainly: script-src must allow
+   'unsafe-inline' because the app is a single file with no build
+   step, so CSP does not stop injected inline script. escapeHtml
+   remains the primary XSS control; the CSP is the second layer
+   that contains what an injection could reach.
+   ============================================================ */
+
+/* ============================================================
    1. CONFIG
    ------------------------------------------------------------
    FormSubmit requires a ONE-TIME ACTIVATION for each address:
@@ -663,8 +930,30 @@ textarea { resize: vertical; min-height: 68px; }
    confirmation email to that address. Submissions are only
    delivered after the link in that email has been clicked.
    Swap the address here — it is the only place it appears.
+
+   Note: this address must also match the connect-src origin in
+   the CSP <meta> tag at the top of the file.
    ============================================================ */
 const FORMSUBMIT_ENDPOINT = "https://formsubmit.co/ajax/YOUR_EMAIL@example.com";
+
+/** The shipped placeholder. Sending real task data to an address
+    nobody owns is a data-disclosure bug, so the notification is
+    skipped entirely until this is replaced. */
+const ENDPOINT_PLACEHOLDER = "YOUR_EMAIL@example.com";
+
+/** Hard timeout for the notification fetch. Without it a hung
+    connection leaves the submit button disabled indefinitely. */
+const NOTIFY_TIMEOUT_MS = 8000;
+
+/** Minimum gap between two notification sends, so a stuck key or
+    a script cannot flood the third-party endpoint. */
+const NOTIFY_MIN_INTERVAL_MS = 3000;
+
+/** Upper bound on board size — bounds memory and render cost. */
+const MAX_TASKS = 200;
+
+/** Furthest acceptable due date, in days from today. */
+const MAX_DUE_DAYS = 365 * 5;
 
 /* ============================================================
    2. DOMAIN CONSTANTS
@@ -700,32 +989,79 @@ const PRIORITIES = ["Critical", "High", "Medium", "Low"];
 
 const TOAST_MS = 4500;
 
+/* Inline SVG icons — no external assets, and they inherit
+   currentColor so they work on any background. */
+const ICON_CHEVRON =
+  '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
+    '<path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" ' +
+          'stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+const ICON_CLOSE =
+  '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
+    '<path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" ' +
+          'stroke-linecap="round"/></svg>';
+
 /* ============================================================
    3. STATE — the single source of truth
    ------------------------------------------------------------
    In-memory only. No localStorage / sessionStorage / IndexedDB
    / cookies anywhere in this file: a refresh reseeds the board.
+
+   Every collapse/expand state lives here too, so the UI stays a
+   pure function of this object rather than of stray classes
+   toggled on nodes.
    ============================================================ */
 const state = {
   tasks: [],
   filters: { project: "", assignee: "", priority: "" },
-  confirmingDelete: null   // task id currently showing "Delete? Yes / No"
+  confirmingDelete: null,   // task id currently showing "Delete? Yes / No"
+
+  collapsedColumns: {},     // status  -> true when collapsed to a rail
+  collapsedCards: {},       // task id -> true when showing title only
+  sidebarCollapsed: false,
+  filtersCollapsed: false
 };
 
 let idCounter = 0;
+
+/** Control to re-focus after the next render, as {action, id}.
+    Cards are destroyed and rebuilt on every render, so without
+    this a keyboard user loses their place whenever they press a
+    card button. */
+let pendingFocus = null;
 
 /* ============================================================
    4. HELPERS
    ============================================================ */
 
-/** Escape any user-supplied string before it reaches innerHTML. */
+/** Escape any user-supplied string before it reaches innerHTML.
+    Covers both text and quoted-attribute contexts; the backtick
+    is included as defence-in-depth for older attribute parsers. */
 function escapeHtml(value) {
   return String(value == null ? "" : value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replace(/'/g, "&#39;")
+    .replace(/`/g, "&#96;");
+}
+
+/** Characters that are never legitimate in a task field:
+    C0/C1 controls (except tab, LF, CR) plus the Unicode
+    bidirectional overrides and zero-width characters used to
+    make one string render as another. */
+const UNSAFE_CHARS =
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+
+/** Normalise free text: strip spoofing characters, collapse
+    runaway whitespace, trim. Applied before validation so the
+    length checks see what will actually be stored. */
+function sanitizeText(value) {
+  return String(value == null ? "" : value)
+    .replace(UNSAFE_CHARS, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
 }
 
 /** Next task id in the UOB-ITPM-#### format. */
@@ -775,6 +1111,15 @@ function fillSelect(select, values, allLabel, selectedValue) {
   });
   select.innerHTML = opts.join("");
   if (selectedValue != null) select.value = selectedValue;
+}
+
+function slug(text) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+/** Safe attribute-value selector fragment. */
+function cssQuote(value) {
+  return (window.CSS && CSS.escape) ? CSS.escape(value) : String(value).replace(/["\\]/g, "\\$&");
 }
 
 /* ============================================================
@@ -869,6 +1214,12 @@ function applyFilters() {
    ------------------------------------------------------------
    Card markup is produced here and nowhere else: every state
    change re-renders rather than poking at card DOM directly.
+
+   buildColumns() still runs once at start-up. renderChrome()
+   then writes the collapse state of the persistent shells
+   (sidebar, filter panel, column heads) from `state` on every
+   render — declaratively, never by toggling on click — so the
+   shells keep their identity and keyboard focus survives.
    ============================================================ */
 
 /** Build the four empty columns once, at start-up. */
@@ -876,48 +1227,86 @@ function buildColumns() {
   const board = document.getElementById("board");
   board.innerHTML = STATUSES.map(function (status) {
     const key = escapeHtml(status);
+    const id  = slug(status);
     return '' +
-      '<section class="column" data-status="' + key + '" aria-labelledby="col-' + slug(status) + '">' +
+      '<section class="column" data-status="' + key + '" aria-labelledby="col-' + id + '">' +
         '<div class="column-head">' +
-          '<h3 id="col-' + slug(status) + '">' + key + '</h3>' +
+          '<button type="button" class="toggle" data-action="toggle-column" data-status="' + key + '"' +
+                 ' aria-expanded="true" aria-controls="body-' + id + '">' +
+            '<span class="sr-only">Collapse the ' + key + ' column</span>' + ICON_CHEVRON +
+          "</button>" +
+          '<h3 id="col-' + id + '">' + key + "</h3>" +
           '<span class="count-badge" data-count-for="' + key + '" aria-label="0 tasks in ' + key + '">0</span>' +
-        '</div>' +
-        '<p class="sr-only">' + escapeHtml(STATUS_MEANING[status]) + '</p>' +
-        '<div class="column-body" data-body-for="' + key + '"></div>' +
+        "</div>" +
+        '<p class="sr-only">' + escapeHtml(STATUS_MEANING[status]) + "</p>" +
+        '<div class="column-body" id="body-' + id + '" data-body-for="' + key + '"></div>' +
       "</section>";
   }).join("");
 }
 
-function slug(text) {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-}
-
 /** HTML for one task card. All interpolated values are escaped. */
 function renderCard(task) {
-  const id       = escapeHtml(task.id);
-  const overdue  = isOverdue(task);
+  const id         = escapeHtml(task.id);
+  const overdue    = isOverdue(task);
   const confirming = state.confirmingDelete === task.id;
+  const collapsed  = state.collapsedCards[task.id] === true;
 
   const moveOptions = STATUSES.map(function (s) {
     return '<option value="' + escapeHtml(s) + '"' +
            (s === task.status ? " selected" : "") + ">" + escapeHtml(s) + "</option>";
   }).join("");
 
+  const overdueBadge = overdue ? '<span class="pill pill-overdue">Overdue</span>' : "";
+
+  // The inline "Delete? Yes / No" row. Built once and used by both
+  // the collapsed and expanded branches below: a collapsed card
+  // still has a delete button, so it must be able to show the
+  // confirmation too, or pressing it would do nothing visible.
+  const confirmHtml =
+    '<div class="confirm-row">' +
+      '<span class="confirm-q">Delete?</span>' +
+      '<button type="button" class="btn-yes" data-action="delete-yes" data-id="' + id + '">Yes</button>' +
+      '<button type="button" class="btn-no" data-action="delete-no" data-id="' + id + '">No</button>' +
+    "</div>";
+
+  // The always-visible head: id, collapse toggle, delete, title.
+  const head = '' +
+    '<div class="card-top">' +
+      '<span class="task-id">' + id + "</span>" +
+      '<button type="button" class="icon-btn" data-action="toggle-card" data-id="' + id + '"' +
+             ' aria-expanded="' + (collapsed ? "false" : "true") + '" aria-controls="detail-' + id + '">' +
+        '<span class="sr-only">' + (collapsed ? "Expand" : "Collapse") + " details for " + id + "</span>" +
+        ICON_CHEVRON +
+      "</button>" +
+      '<button type="button" class="icon-btn danger" data-action="delete-ask" data-id="' + id + '">' +
+        '<span class="sr-only">Delete task ' + id + "</span>" + ICON_CLOSE +
+      "</button>" +
+    "</div>" +
+    '<h4 class="card-title">' + escapeHtml(task.title) + "</h4>";
+
+  // Collapsed cards keep the priority pill so the board stays
+  // scannable — colour alone is never the signal, the text is there.
+  if (collapsed) {
+    return '' +
+      '<article class="card" draggable="true" data-id="' + id + '" data-priority="' + escapeHtml(task.priority) + '"' +
+        ' aria-label="' + escapeHtml(task.id + ": " + task.title) + '">' +
+        head +
+        '<div class="pill-row" id="detail-' + id + '">' +
+          '<span class="pill pill-prio" data-priority="' + escapeHtml(task.priority) + '">' +
+            escapeHtml(task.priority) + "</span>" +
+          overdueBadge +
+        "</div>" +
+        (confirming ? confirmHtml : "") +
+      "</article>";
+  }
+
   const descHtml = task.description
     ? '<p class="card-desc">' + escapeHtml(task.description) + "</p>"
     : "";
 
-  const overdueBadge = overdue
-    ? '<span class="pill pill-overdue">Overdue</span>'
-    : "";
-
   // Footer area: either the normal actions, or the inline delete confirmation.
   const footerHtml = confirming
-    ? '<div class="confirm-row">' +
-        '<span class="confirm-q">Delete?</span>' +
-        '<button type="button" class="btn-yes" data-action="delete-yes" data-id="' + id + '">Yes</button>' +
-        '<button type="button" class="btn-no" data-action="delete-no" data-id="' + id + '">No</button>' +
-      "</div>"
+    ? confirmHtml
     : '<div class="card-actions">' +
         '<span class="move-label" aria-hidden="true">Move &#9656;</span>' +
         '<label class="sr-only" for="move-' + id + '">Move ' + id + ' to column</label>' +
@@ -930,31 +1319,74 @@ function renderCard(task) {
     '<article class="card" draggable="true" data-id="' + id + '" data-priority="' + escapeHtml(task.priority) + '"' +
       ' aria-label="' + escapeHtml(task.id + ": " + task.title) + '">' +
 
-      '<div class="card-top">' +
-        '<span class="task-id">' + id + "</span>" +
-        '<button type="button" class="icon-btn" data-action="delete-ask" data-id="' + id + '"' +
-          ' aria-label="Delete task ' + id + '">&times;</button>' +
+      head +
+
+      '<div id="detail-' + id + '">' +
+        descHtml +
+
+        '<div class="card-meta">' +
+          '<div><span class="meta-key">Project:</span> <span class="meta-val">' + escapeHtml(task.project) + "</span></div>" +
+          '<div><span class="meta-key">Assignee:</span> <span class="meta-val">' + escapeHtml(task.assignee) + "</span></div>" +
+          '<div><span class="meta-key">Due:</span> <span class="meta-val">' + escapeHtml(formatDate(task.dueDate)) + "</span></div>" +
+        "</div>" +
+
+        '<div class="pill-row">' +
+          '<span class="pill pill-prio" data-priority="' + escapeHtml(task.priority) + '">' +
+            escapeHtml(task.priority) +
+          "</span>" +
+          '<span class="pill pill-cat">' + escapeHtml(task.category) + "</span>" +
+          overdueBadge +
+        "</div>" +
+
+        footerHtml +
       "</div>" +
-
-      '<h4 class="card-title">' + escapeHtml(task.title) + "</h4>" +
-      descHtml +
-
-      '<div class="card-meta">' +
-        '<div><span class="meta-key">Project:</span> <span class="meta-val">' + escapeHtml(task.project) + "</span></div>" +
-        '<div><span class="meta-key">Assignee:</span> <span class="meta-val">' + escapeHtml(task.assignee) + "</span></div>" +
-        '<div><span class="meta-key">Due:</span> <span class="meta-val">' + escapeHtml(formatDate(task.dueDate)) + "</span></div>" +
-      "</div>" +
-
-      '<div class="pill-row">' +
-        '<span class="pill pill-prio" data-priority="' + escapeHtml(task.priority) + '">' +
-          escapeHtml(task.priority) +
-        "</span>" +
-        '<span class="pill pill-cat">' + escapeHtml(task.category) + "</span>" +
-        overdueBadge +
-      "</div>" +
-
-      footerHtml +
     "</article>";
+}
+
+/** Apply every collapse/expand state from `state` to the shells
+    that persist across renders. Declarative: called on each
+    render, never toggled ad hoc from an event handler. */
+function renderChrome() {
+  // ---- Sidebar ----
+  const layout = document.getElementById("layout");
+  const sideBtn = document.getElementById("toggle-sidebar");
+  layout.classList.toggle("sidebar-collapsed", state.sidebarCollapsed);
+  sideBtn.setAttribute("aria-expanded", String(!state.sidebarCollapsed));
+  sideBtn.querySelector(".sr-only").textContent =
+    (state.sidebarCollapsed ? "Expand" : "Collapse") + " the Add Task panel";
+  document.getElementById("task-form").hidden = state.sidebarCollapsed;
+
+  // ---- Filter panel ----
+  const filterBtn = document.getElementById("toggle-filters");
+  filterBtn.setAttribute("aria-expanded", String(!state.filtersCollapsed));
+  filterBtn.querySelector(".sr-only").textContent =
+    (state.filtersCollapsed ? "Expand" : "Collapse") + " the filter panel";
+  document.getElementById("filter-fields").hidden = state.filtersCollapsed;
+
+  // ---- Columns ----
+  STATUSES.forEach(function (status) {
+    const collapsed = state.collapsedColumns[status] === true;
+    const column = document.querySelector('.column[data-status="' + cssQuote(status) + '"]');
+    if (!column) return;
+    column.classList.toggle("is-collapsed", collapsed);
+
+    const btn = column.querySelector('[data-action="toggle-column"]');
+    btn.setAttribute("aria-expanded", String(!collapsed));
+    btn.querySelector(".sr-only").textContent =
+      (collapsed ? "Expand" : "Collapse") + " the " + status + " column";
+  });
+
+  // ---- Compact-cards toggle reflects whether ALL cards are collapsed ----
+  const allCollapsed = state.tasks.length > 0 &&
+    state.tasks.every(function (t) { return state.collapsedCards[t.id] === true; });
+  document.getElementById("toggle-cards").setAttribute("aria-pressed", String(allCollapsed));
+
+  // ---- Plain-language note about what is hidden right now ----
+  const hiddenCols = STATUSES.filter(function (s) { return state.collapsedColumns[s]; }).length;
+  const note = document.getElementById("collapse-note");
+  note.textContent = hiddenCols
+    ? hiddenCols + " of " + STATUSES.length + " columns collapsed"
+    : "";
 }
 
 /** Rebuild every column body and count badge from state. */
@@ -962,8 +1394,8 @@ function renderBoard() {
   const visible = applyFilters();
 
   STATUSES.forEach(function (status) {
-    const body  = document.querySelector('[data-body-for="' + status + '"]');
-    const badge = document.querySelector('[data-count-for="' + status + '"]');
+    const body  = document.querySelector('[data-body-for="' + cssQuote(status) + '"]');
+    const badge = document.querySelector('[data-count-for="' + cssQuote(status) + '"]');
     const tasks = visible.filter(function (t) { return t.status === status; });
 
     body.innerHTML = tasks.length
@@ -974,7 +1406,9 @@ function renderBoard() {
     badge.setAttribute("aria-label", tasks.length + " tasks in " + status);
   });
 
+  renderChrome();
   renderSummary();
+  restoreFocus();
 }
 
 /** Live totals in the header: all counts derive from state, not the DOM. */
@@ -992,6 +1426,17 @@ function renderSummary() {
   items.push('<li class="is-overdue">Overdue <b>' + overdueCount + "</b></li>");
 
   document.getElementById("summary-strip").innerHTML = items.join("");
+}
+
+/** Put keyboard focus back on the control the user just pressed,
+    after its DOM node was replaced by the re-render. */
+function restoreFocus() {
+  if (!pendingFocus) return;
+  const sel = '[data-action="' + cssQuote(pendingFocus.action) + '"]' +
+              '[data-id="' + cssQuote(pendingFocus.id) + '"]';
+  const el = document.querySelector(sel);
+  pendingFocus = null;
+  if (el) el.focus();
 }
 
 /* ============================================================
@@ -1016,8 +1461,30 @@ function deleteTask(id) {
   const removed = state.tasks[index];
   state.tasks.splice(index, 1);
   state.confirmingDelete = null;
+  delete state.collapsedCards[id];
   renderBoard();
   showToast("Deleted " + removed.id + ".", "info");
+}
+
+function setColumnCollapsed(status, collapsed) {
+  if (STATUSES.indexOf(status) === -1) return;
+  if (collapsed) state.collapsedColumns[status] = true;
+  else delete state.collapsedColumns[status];
+  renderChrome();
+}
+
+function setAllColumnsCollapsed(collapsed) {
+  state.collapsedColumns = {};
+  if (collapsed) STATUSES.forEach(function (s) { state.collapsedColumns[s] = true; });
+  renderChrome();
+  showToast(collapsed ? "All columns collapsed." : "All columns expanded.", "info");
+}
+
+function setAllCardsCollapsed(collapsed) {
+  state.collapsedCards = {};
+  if (collapsed) state.tasks.forEach(function (t) { state.collapsedCards[t.id] = true; });
+  renderBoard();
+  showToast(collapsed ? "Cards collapsed to titles." : "Card details shown.", "info");
 }
 
 /* ============================================================
@@ -1034,31 +1501,70 @@ function showToast(message, kind) {
 
 /* ============================================================
    10. FORMSUBMIT NOTIFICATION
-   The only network call in this file. Failures are contained
-   by the caller and never affect the board.
+   ------------------------------------------------------------
+   The only network call in this file. Hardened as follows:
+     credentials: "omit" .... never attach cookies to a third party
+     referrerPolicy ......... never disclose the page URL / path
+     redirect: "error" ...... refuse to follow a redirect to some
+                              other host, which would defeat the
+                              connect-src allow-list
+     cache: "no-store" ...... keep task data out of the HTTP cache
+     AbortController ........ hard timeout; a hung request can no
+                              longer wedge the submit button
+   Failures are contained by the caller and never affect the board.
+
+   Data-minimisation note: assignee names are personal data and do
+   leave the browser here. That is inherent to the feature, but it
+   is the reason for the placeholder guard below — an unconfigured
+   endpoint must never receive real names.
    ============================================================ */
+let lastNotifyAt = 0;
+
+/** Refuse to transmit anything while the endpoint is still the
+    shipped placeholder address. */
+function endpointConfigured() {
+  return FORMSUBMIT_ENDPOINT.indexOf(ENDPOINT_PLACEHOLDER) === -1;
+}
+
 async function notifyNewTask(task) {
-  const res = await fetch(FORMSUBMIT_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({
-      _subject: `[UOB IT PMO] New task ${task.id}: ${task.title}`,
-      _template: "table",
-      _captcha: "false",
-      "Task ID": task.id,
-      Title: task.title,
-      Description: task.description,
-      Project: task.project,
-      Category: task.category,
-      Assignee: task.assignee,
-      Priority: task.priority,
-      "Due Date": task.dueDate,
-      Status: task.status,
-      "Submitted At": new Date().toISOString(),
-    }),
-  });
-  if (!res.ok) throw new Error(`FormSubmit failed: ${res.status}`);
-  return res.json();
+  const controller = new AbortController();
+  const timer = window.setTimeout(function () { controller.abort(); }, NOTIFY_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(FORMSUBMIT_ENDPOINT, {
+      method: "POST",
+      mode: "cors",
+      credentials: "omit",
+      cache: "no-store",
+      redirect: "error",
+      referrerPolicy: "no-referrer",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        _subject: `[UOB IT PMO] New task ${task.id}: ${task.title}`,
+        _template: "table",
+        // FormSubmit's captcha is disabled because this is an
+        // unattended AJAX post. The trade-off is that anyone who
+        // learns the endpoint URL can post to it, which is why the
+        // address is a config constant and not a secret.
+        _captcha: "false",
+        "Task ID": task.id,
+        Title: task.title,
+        Description: task.description,
+        Project: task.project,
+        Category: task.category,
+        Assignee: task.assignee,
+        Priority: task.priority,
+        "Due Date": task.dueDate,
+        Status: task.status,
+        "Submitted At": new Date().toISOString(),
+      }),
+    });
+    if (!res.ok) throw new Error(`FormSubmit failed: ${res.status}`);
+    return res.json();
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 /* ============================================================
@@ -1070,8 +1576,10 @@ function populateFormSelects() {
   fillSelect(document.getElementById("f-priority"), PRIORITIES, null, "Medium");
   fillSelect(document.getElementById("f-status"),   STATUSES,   null, "Backlog");
 
-  // Browser-level guard against past dates, on top of validateForm().
-  document.getElementById("f-dueDate").min = todayISO();
+  // Browser-level guards, on top of validateForm().
+  const due = document.getElementById("f-dueDate");
+  due.min = todayISO();
+  due.max = daysFromToday(MAX_DUE_DAYS);
 }
 
 function populateFilterSelects() {
@@ -1079,23 +1587,31 @@ function populateFilterSelects() {
   fillSelect(document.getElementById("filter-priority"), PRIORITIES, "All priorities", "");
 }
 
-/** Read the form into a plain object. */
+/** Read the form into a plain object, sanitising free text on the
+    way in so validation and storage see the same value. */
 function readForm() {
   return {
-    title:       document.getElementById("f-title").value.trim(),
-    description: document.getElementById("f-description").value.trim(),
+    title:       sanitizeText(document.getElementById("f-title").value),
+    description: sanitizeText(document.getElementById("f-description").value),
     project:     document.getElementById("f-project").value,
     category:    document.getElementById("f-category").value,
-    assignee:    document.getElementById("f-assignee").value.trim(),
+    assignee:    sanitizeText(document.getElementById("f-assignee").value),
     priority:    document.getElementById("f-priority").value,
     dueDate:     document.getElementById("f-dueDate").value,
     status:      document.getElementById("f-status").value
   };
 }
 
-/** Returns a map of fieldName -> error message. Empty map = valid. */
+/** Returns a map of fieldName -> error message. Empty map = valid.
+    Selects are checked against the canonical lists rather than
+    trusted, because the DOM is fully editable by the client. */
 function validateForm(values) {
   const errors = {};
+
+  if (state.tasks.length >= MAX_TASKS) {
+    errors.title = "Board limit reached (" + MAX_TASKS + " tasks). Delete a task first.";
+    return errors;
+  }
 
   if (!values.title) errors.title = "Task title is required.";
   else if (values.title.length > 80) errors.title = "Keep the title to 80 characters or fewer.";
@@ -1105,9 +1621,12 @@ function validateForm(values) {
   }
 
   if (!values.assignee) errors.assignee = "Assignee is required.";
+  else if (values.assignee.length > 60) errors.assignee = "Keep the assignee to 60 characters or fewer.";
 
   if (!values.dueDate) errors.dueDate = "Due date is required.";
+  else if (!/^\d{4}-\d{2}-\d{2}$/.test(values.dueDate)) errors.dueDate = "Enter the date as YYYY-MM-DD.";
   else if (values.dueDate < todayISO()) errors.dueDate = "Due date cannot be in the past.";
+  else if (values.dueDate > daysFromToday(MAX_DUE_DAYS)) errors.dueDate = "Due date cannot be more than 5 years out.";
 
   if (PROJECTS.indexOf(values.project) === -1)     errors.project  = "Choose a project.";
   if (CATEGORIES.indexOf(values.category) === -1)  errors.category = "Choose a category.";
@@ -1136,6 +1655,13 @@ function showFieldErrors(errors) {
 
 async function handleSubmit(event) {
   event.preventDefault();
+
+  // A collapsed sidebar hides the form, so nothing can be submitted
+  // from it; expand first if a stray Enter reaches us.
+  if (state.sidebarCollapsed) {
+    state.sidebarCollapsed = false;
+    renderChrome();
+  }
 
   const values = readForm();
   const errors = validateForm(values);
@@ -1166,6 +1692,21 @@ async function handleSubmit(event) {
   showToast("Added " + task.id + " to " + task.status + ".", "success");
 
   // --- Email notification runs after, and can never break the board. ---
+
+  // Guard 1: never transmit to the unconfigured placeholder address.
+  if (!endpointConfigured()) {
+    showToast("Card added. Email notification is off — set FORMSUBMIT_ENDPOINT.", "info");
+    return;
+  }
+
+  // Guard 2: rate-limit outbound posts to the third-party endpoint.
+  const now = Date.now();
+  if (now - lastNotifyAt < NOTIFY_MIN_INTERVAL_MS) {
+    showToast("Card added. Email notification skipped — sending too fast.", "warn");
+    return;
+  }
+  lastNotifyAt = now;
+
   const btn = document.getElementById("submit-btn");
   btn.disabled = true;
   btn.textContent = "Sending…";
@@ -1174,7 +1715,13 @@ async function handleSubmit(event) {
     await notifyNewTask(task);
     showToast("Email notification sent for " + task.id + ".", "success");
   } catch (err) {
-    showToast("Card added locally — email notification failed.", "warn");
+    const timedOut = err && err.name === "AbortError";
+    showToast(
+      timedOut
+        ? "Card added locally — email notification timed out."
+        : "Card added locally — email notification failed.",
+      "warn"
+    );
   } finally {
     btn.disabled = false;
     btn.textContent = "Add Task";
@@ -1183,35 +1730,57 @@ async function handleSubmit(event) {
 
 /* ============================================================
    12. EVENT WIRING
+   ------------------------------------------------------------
+   All card and column interaction is delegated from #board:
+   cards are destroyed and recreated on every render, so there
+   are no per-card listeners. Controls carry data-action plus
+   data-id (cards) or data-status (columns).
    ============================================================ */
 function wireEvents() {
   const board = document.getElementById("board");
 
-  // ---- Card buttons (delegated: no per-card listeners) ----
+  // ---- Card + column buttons (delegated: no per-card listeners) ----
   board.addEventListener("click", function (event) {
     const btn = event.target.closest("[data-action]");
     if (!btn || btn.tagName === "SELECT") return;
 
-    const id = btn.getAttribute("data-id");
-    switch (btn.getAttribute("data-action")) {
-      case "delete-ask":
-        state.confirmingDelete = id;
-        renderBoard();
-        // Keep the keyboard on the confirmation that just appeared.
-        const yes = board.querySelector('[data-action="delete-yes"][data-id="' + id + '"]');
-        if (yes) yes.focus();
+    const id     = btn.getAttribute("data-id");
+    const action = btn.getAttribute("data-action");
+
+    switch (action) {
+      case "toggle-column": {
+        const status = btn.getAttribute("data-status");
+        setColumnCollapsed(status, !state.collapsedColumns[status]);
         break;
+      }
+      case "toggle-card": {
+        if (state.collapsedCards[id]) delete state.collapsedCards[id];
+        else state.collapsedCards[id] = true;
+        pendingFocus = { action: "toggle-card", id: id };
+        renderBoard();
+        break;
+      }
+      case "delete-ask": {
+        state.confirmingDelete = id;
+        pendingFocus = { action: "delete-yes", id: id };
+        renderBoard();
+        break;
+      }
       case "delete-yes":
         deleteTask(id);
         break;
-      case "delete-no":
+      case "delete-no": {
         state.confirmingDelete = null;
+        pendingFocus = { action: "delete-ask", id: id };
         renderBoard();
         break;
+      }
     }
   });
 
   // ---- Keyboard-accessible "Move ▸" control ----
+  // WCAG 2.2 requires a non-dragging alternative for every drag
+  // operation; this select is that alternative and must stay.
   board.addEventListener("change", function (event) {
     const select = event.target.closest('select[data-action="move"]');
     if (!select) return;
@@ -1248,13 +1817,43 @@ function wireEvents() {
     if (column && !column.contains(event.relatedTarget)) column.classList.remove("drag-over");
   });
 
+  // Dropping onto a collapsed column expands it, so the card the
+  // user just moved is never silently hidden.
   board.addEventListener("drop", function (event) {
     const column = event.target.closest(".column");
     if (!column) return;
     event.preventDefault();
     clearDropHighlights();
     const id = event.dataTransfer.getData("text/plain");
-    if (id) moveTask(id, column.getAttribute("data-status"));
+    const status = column.getAttribute("data-status");
+    if (!id) return;
+    if (state.collapsedColumns[status]) delete state.collapsedColumns[status];
+    moveTask(id, status);
+    renderChrome();
+  });
+
+  // ---- Collapse / expand chrome ----
+  document.getElementById("toggle-sidebar").addEventListener("click", function () {
+    state.sidebarCollapsed = !state.sidebarCollapsed;
+    renderChrome();
+  });
+
+  document.getElementById("toggle-filters").addEventListener("click", function () {
+    state.filtersCollapsed = !state.filtersCollapsed;
+    renderChrome();
+  });
+
+  document.getElementById("collapse-all").addEventListener("click", function () {
+    setAllColumnsCollapsed(true);
+  });
+
+  document.getElementById("expand-all").addEventListener("click", function () {
+    setAllColumnsCollapsed(false);
+  });
+
+  document.getElementById("toggle-cards").addEventListener("click", function (e) {
+    const pressed = e.currentTarget.getAttribute("aria-pressed") === "true";
+    setAllCardsCollapsed(!pressed);
   });
 
   // ---- Filters ----
@@ -1267,7 +1866,7 @@ function wireEvents() {
     renderBoard();
   });
   document.getElementById("filter-assignee").addEventListener("input", function (e) {
-    state.filters.assignee = e.target.value;
+    state.filters.assignee = sanitizeText(e.target.value);
     renderBoard();
   });
   document.getElementById("clear-filters").addEventListener("click", function () {
